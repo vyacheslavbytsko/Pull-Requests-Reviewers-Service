@@ -37,7 +37,7 @@ func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.
 }
 
 func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, params api.GetUsersGetReviewParams) {
-	w.Write([]byte("Hello World from PostPullRequestCreate!"))
+	w.WriteHeader(http.StatusNotImplemented)
 }
 
 func (h *Handler) PostUsersSetIsActive(w http.ResponseWriter, r *http.Request) {
