@@ -4,15 +4,16 @@ import (
 	"net/http"
 
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/api"
+	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/store"
 )
 
 type Handler struct {
-	store *Store
+	store *store.Store
 }
 
 func NewHandler() *Handler {
 	return &Handler{
-		store: NewStore(),
+		store: store.NewStore(),
 	}
 }
 
