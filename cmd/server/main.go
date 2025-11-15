@@ -6,13 +6,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/api"
+	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/handler"
 )
 
 func main() {
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 
-	router.Get("/", basicHandler)
+	h := handler.NewHandler()
+	apiHandler := api.Handler(h)
+
+	router.Mount("/", apiHandler)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -23,8 +28,4 @@ func main() {
 	if err != nil {
 		fmt.Println("Failed to start server:", err)
 	}
-}
-
-func basicHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Hello World"))
 }
