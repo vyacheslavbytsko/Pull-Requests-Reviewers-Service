@@ -6,10 +6,14 @@ import (
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/api"
 )
 
-type Handler struct{}
+type Handler struct {
+	store *Store
+}
 
 func NewHandler() *Handler {
-	return &Handler{}
+	return &Handler{
+		store: NewStore(),
+	}
 }
 
 func (h *Handler) PostPullRequestCreate(w http.ResponseWriter, r *http.Request) {
