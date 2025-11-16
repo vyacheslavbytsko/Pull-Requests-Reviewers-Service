@@ -132,12 +132,11 @@ func (h *Handler) PostPullRequestCreate(w http.ResponseWriter, r *http.Request) 
 		assignedReviewers = assignedReviewers[:2]
 	}
 
-	var createdAt *time.Time
-	err = h.db.Pool.QueryRow(ctx, `
-			INSERT INTO prs(pull_request_id, pull_request_name, author_id, status, assigned_reviewers)
-			VALUES($1, $2, $3, $4, $5)
-			RETURNING created_at
-		`, body.PullRequestId, body.PullRequestName, body.AuthorId, "OPEN", assignedReviewers).Scan(&createdAt)
+	createdAt := time.Now().UTC()
+	_, err = h.db.Pool.Exec(ctx, `
+		INSERT INTO prs(pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at)
+		VALUES($1, $2, $3, $4, $5, $6)
+	`, body.PullRequestId, body.PullRequestName, body.AuthorId, "OPEN", assignedReviewers, createdAt)
 
 	if err != nil {
 		writeError(w, api.INTERNALERROR, "failed to create PR", http.StatusInternalServerError)
@@ -150,7 +149,7 @@ func (h *Handler) PostPullRequestCreate(w http.ResponseWriter, r *http.Request) 
 		AuthorId:          body.AuthorId,
 		Status:            api.PullRequestStatusOPEN,
 		AssignedReviewers: assignedReviewers,
-		CreatedAt:         createdAt,
+		CreatedAt:         &createdAt,
 		MergedAt:          nil,
 	}
 
