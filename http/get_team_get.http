@@ -1,0 +1,4 @@
+### GET request to get team
+GET http://localhost:8080/team/get?team_name=backend
+Content-Type: application/json
+###

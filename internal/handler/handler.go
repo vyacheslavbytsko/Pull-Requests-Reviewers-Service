@@ -104,7 +104,17 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.GetTeamGetParams) {
-	w.WriteHeader(http.StatusNotImplemented)
+	teamName := params.TeamName
+	team, exists := h.store.Teams[teamName]
+
+	if !exists {
+		writeError(w, "NOT_FOUND", "team not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]*api.Team{"team": team})
 }
 
 func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, params api.GetUsersGetReviewParams) {
