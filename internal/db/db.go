@@ -49,6 +49,15 @@ func createTables(ctx context.Context, pool *pgxpool.Pool) error {
 			team_name TEXT NOT NULL REFERENCES teams(team_name),
 			is_active BOOLEAN NOT NULL DEFAULT TRUE
 		);`,
+		`CREATE TABLE IF NOT EXISTS prs (
+    		pull_request_id TEXT PRIMARY KEY,
+    		pull_request_name TEXT NOT NULL,
+    		author_id TEXT NOT NULL REFERENCES users(user_id),
+    		status TEXT NOT NULL CHECK ( status IN ('OPEN', 'MERGED')),
+    		assigned_reviewers TEXT[] NOT NULL,
+    		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    		merged_at TIMESTAMPTZ
+    	);`,
 	}
 
 	for _, q := range queries {

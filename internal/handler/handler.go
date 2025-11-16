@@ -3,19 +3,23 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
+	"time"
 
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/api"
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/db"
 )
 
 type Handler struct {
-	db *db.DB
+	db   *db.DB
+	rand *rand.Rand
 }
 
 func NewHandler(db *db.DB) *Handler {
 	return &Handler{
-		db: db,
+		db:   db,
+		rand: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -33,7 +37,124 @@ func writeError(w http.ResponseWriter, code api.ErrorResponseErrorCode, msg stri
 }
 
 func (h *Handler) PostPullRequestCreate(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+	ctx := r.Context()
+	var body api.PostPullRequestCreateJSONBody
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, api.INVALIDREQUEST, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.PullRequestId == "" {
+		writeError(w, api.INVALIDREQUEST, "pull_request_id is required", http.StatusBadRequest)
+		return
+	}
+
+	if body.PullRequestName == "" {
+		writeError(w, api.INVALIDREQUEST, "pull_request_name is required", http.StatusBadRequest)
+		return
+	}
+
+	if body.AuthorId == "" {
+		writeError(w, api.INVALIDREQUEST, "author_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var exists bool
+	err := h.db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM prs WHERE pull_request_id=$1)",
+		body.PullRequestId,
+	).Scan(&exists)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "database error", http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		writeError(w, api.PREXISTS, "PR id already exists", http.StatusConflict)
+		return
+	}
+
+	err = h.db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM users WHERE user_id=$1)",
+		body.AuthorId,
+	).Scan(&exists)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "database error", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		writeError(w, api.NOTFOUND, "author not found", http.StatusNotFound)
+		return
+	}
+
+	var teamName string
+	err = h.db.Pool.QueryRow(ctx, "SELECT team_name FROM users WHERE user_id=$1", body.AuthorId).Scan(&teamName)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to get author's team", http.StatusInternalServerError)
+		return
+	}
+
+	// Get rows where all conditions are met
+	rows, err := h.db.Pool.Query(ctx, `SELECT user_id FROM users WHERE team_name=$1 AND is_active=TRUE AND user_id<>$2`, teamName, body.AuthorId)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to get team members", http.StatusInternalServerError)
+		return
+	}
+
+	defer rows.Close()
+
+	reviewerCandidates := make([]string, 0, 2)
+
+	for rows.Next() {
+		var userId string
+		if err := rows.Scan(&userId); err != nil {
+			writeError(w, api.INTERNALERROR, "failed to scan reviewer", http.StatusInternalServerError)
+			return
+		}
+		reviewerCandidates = append(reviewerCandidates, userId)
+	}
+
+	// We shuffle candidates
+	if len(reviewerCandidates) > 1 {
+		h.rand.Shuffle(len(reviewerCandidates), func(i, j int) {
+			reviewerCandidates[i], reviewerCandidates[j] = reviewerCandidates[j], reviewerCandidates[i]
+		})
+	}
+
+	assignedReviewers := reviewerCandidates
+	if len(assignedReviewers) > 2 {
+		assignedReviewers = assignedReviewers[:2]
+	}
+
+	var createdAt *time.Time
+	err = h.db.Pool.QueryRow(ctx, `
+			INSERT INTO prs(pull_request_id, pull_request_name, author_id, status, assigned_reviewers)
+			VALUES($1, $2, $3, $4, $5)
+			RETURNING created_at
+		`, body.PullRequestId, body.PullRequestName, body.AuthorId, "OPEN", assignedReviewers).Scan(&createdAt)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to create PR", http.StatusInternalServerError)
+		return
+	}
+
+	pr := api.PullRequest{
+		PullRequestId:     body.PullRequestId,
+		PullRequestName:   body.PullRequestName,
+		AuthorId:          body.AuthorId,
+		Status:            api.PullRequestStatusOPEN,
+		AssignedReviewers: assignedReviewers,
+		CreatedAt:         createdAt,
+		MergedAt:          nil,
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]api.PullRequest{"pr": pr})
 }
 
 func (h *Handler) PostPullRequestMerge(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +276,7 @@ func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.
 		Members:  members,
 	}
 
-	writeJSON(w, http.StatusCreated, team)
+	writeJSON(w, http.StatusOK, team)
 }
 
 func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, params api.GetUsersGetReviewParams) {
