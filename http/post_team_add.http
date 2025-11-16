@@ -1,0 +1,25 @@
+### POST request to add a new team with members
+POST http://localhost:8080/team/add
+Content-Type: application/json
+
+{
+  "team_name": "backend",
+  "members": [
+    {
+      "username": "alice",
+      "user_id": "1",
+      "is_active": true
+    },
+    {
+      "username": "bob",
+      "user_id": "2",
+      "is_active": true
+    },
+    {
+      "username": "charlie",
+      "user_id": "3",
+      "is_active": false
+    }
+  ]
+}
+###

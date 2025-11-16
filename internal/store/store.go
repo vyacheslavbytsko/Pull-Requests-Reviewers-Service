@@ -7,7 +7,7 @@ import (
 )
 
 type Store struct {
-	mu    sync.RWMutex
+	Mu    sync.RWMutex
 	Users map[string]*api.User
 	Teams map[string]*api.Team
 	PRs   map[string]*api.PullRequest
