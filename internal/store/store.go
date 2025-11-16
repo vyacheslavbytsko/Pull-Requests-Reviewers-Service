@@ -20,11 +20,3 @@ func NewStore() *Store {
 		PRs:   make(map[string]*api.PullRequest),
 	}
 }
-
-func UserToTeamMember(u *api.User) api.TeamMember {
-	return api.TeamMember{
-		UserId:   u.UserId,
-		Username: u.Username,
-		IsActive: u.IsActive,
-	}
-}
