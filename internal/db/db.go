@@ -31,7 +31,33 @@ func NewDB() (*DB, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	if err := createTables(ctx, pool); err != nil {
+		return nil, err
+	}
+
 	return &DB{Pool: pool}, nil
+}
+
+func createTables(ctx context.Context, pool *pgxpool.Pool) error {
+	queries := []string{
+		`CREATE TABLE teams (
+			team_name TEXT PRIMARY KEY
+		);`,
+		`CREATE TABLE users (
+			user_id TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			team_name TEXT NOT NULL REFERENCES teams(team_name),
+			is_active BOOLEAN NOT NULL DEFAULT TRUE
+		);`,
+	}
+
+	for _, q := range queries {
+		if _, err := pool.Exec(ctx, q); err != nil {
+			return fmt.Errorf("failed to execute query: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (db *DB) Close() {
