@@ -2,10 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/api"
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/db"
@@ -221,7 +224,119 @@ func (h *Handler) PostPullRequestMerge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) PostPullRequestReassign(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+	ctx := r.Context()
+	var body api.PostPullRequestReassignJSONBody
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, api.INVALIDREQUEST, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.PullRequestId == "" {
+		writeError(w, api.INVALIDREQUEST, "pull_request_id is required", http.StatusBadRequest)
+		return
+	}
+
+	if body.OldUserId == "" {
+		writeError(w, api.INVALIDREQUEST, "old_user_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var (
+		status            string
+		assignedReviewers []string
+		mergedAt          *time.Time
+		createdAt         *time.Time
+		prName, authorId  string
+	)
+	err := h.db.Pool.QueryRow(ctx, `SELECT status, assigned_reviewers, merged_at, created_at, pull_request_name, author_id FROM prs WHERE pull_request_id=$1`, body.PullRequestId).Scan(&status, &assignedReviewers, &mergedAt, &createdAt, &prName, &authorId)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, api.NOTFOUND, "PR not found", http.StatusNotFound)
+			return
+		}
+		writeError(w, api.INTERNALERROR, "database error", http.StatusInternalServerError)
+		return
+	}
+
+	if status != string(api.PullRequestStatusOPEN) {
+		writeError(w, api.PRMERGED, "cannot reassign on merged PR", http.StatusBadRequest)
+		return
+	}
+
+	oldIdx := -1
+	for i, uid := range assignedReviewers {
+		if uid == body.OldUserId {
+			oldIdx = i
+			break
+		}
+	}
+
+	if oldIdx == -1 {
+		writeError(w, api.NOTASSIGNED, "reviewer is not assigned to this PR", http.StatusBadRequest)
+		return
+	}
+
+	var teamName string
+	err = h.db.Pool.QueryRow(ctx, "SELECT team_name FROM users WHERE user_id=$1", body.OldUserId).Scan(&teamName)
+	if err != nil {
+		writeError(w, api.NOTFOUND, "old_user_id not found", http.StatusNotFound)
+		return
+	}
+
+	rows, err := h.db.Pool.Query(ctx, `SELECT user_id FROM users WHERE team_name=$1 AND is_active=TRUE AND user_id<>$2`, teamName, body.OldUserId)
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to get team members", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	assignedSet := make(map[string]struct{}, len(assignedReviewers))
+	// we use set because search in lists is O(n) whilst search in set is O(1)
+	for _, uid := range assignedReviewers {
+		assignedSet[uid] = struct{}{} // because empty structs don't weigh anything, they can be values
+	}
+	assignedSet[authorId] = struct{}{} // exclude PR author as well
+
+	candidates := make([]string, 0)
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			writeError(w, api.INTERNALERROR, "failed to scan candidate", http.StatusInternalServerError)
+			return
+		}
+		if _, already := assignedSet[uid]; !already {
+			candidates = append(candidates, uid)
+		}
+	}
+
+	if len(candidates) == 0 {
+		writeError(w, api.NOCANDIDATE, "no active replacement candidate in team", http.StatusConflict)
+		return
+	}
+
+	newIdx := h.rand.Intn(len(candidates))
+	newReviewer := candidates[newIdx]
+	assignedReviewers[oldIdx] = newReviewer
+
+	_, err = h.db.Pool.Exec(ctx, `UPDATE prs SET assigned_reviewers=$1 WHERE pull_request_id=$2`, assignedReviewers, body.PullRequestId)
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to update reviewers", http.StatusInternalServerError)
+		return
+	}
+
+	pr := api.PullRequest{
+		PullRequestId:     body.PullRequestId,
+		PullRequestName:   prName,
+		AuthorId:          authorId,
+		Status:            api.PullRequestStatusOPEN,
+		AssignedReviewers: assignedReviewers,
+		CreatedAt:         createdAt,
+		MergedAt:          mergedAt,
+	}
+
+	writeJSON(w, http.StatusOK, map[string]api.PullRequest{"pr": pr})
 }
 
 func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {

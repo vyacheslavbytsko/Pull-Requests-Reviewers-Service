@@ -1,0 +1,9 @@
+### POST request to reassign pull request reviewer
+POST http://localhost:8080/pullRequest/reassign
+Content-Type: application/json
+
+{
+  "pull_request_id": "1",
+  "old_user_id": "2"
+}
+
