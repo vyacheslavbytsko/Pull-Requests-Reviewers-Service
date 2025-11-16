@@ -94,8 +94,6 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 				TeamName: team.TeamName,
 			}
 		}
-
-		fmt.Println(h.store.Users[m.UserId])
 	}
 
 	w.Header().Set("Content-Type", "application/json")
