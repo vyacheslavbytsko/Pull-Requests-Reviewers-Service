@@ -6,16 +6,16 @@ import (
 	"net/http"
 
 	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/api"
-	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/store"
+	"github.com/vyacheslavbytsko/Pull-Requests-Reviewers-Service/internal/db"
 )
 
 type Handler struct {
-	store *store.Store
+	db *db.DB
 }
 
-func NewHandler() *Handler {
+func NewHandler(db *db.DB) *Handler {
 	return &Handler{
-		store: store.NewStore(),
+		db: db,
 	}
 }
 
@@ -45,6 +45,7 @@ func (h *Handler) PostPullRequestReassign(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var team api.Team
 
 	if err := json.NewDecoder(r.Body).Decode(&team); err != nil {
@@ -69,32 +70,41 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.store.Mu.Lock()
-	defer h.store.Mu.Unlock()
+	var exists bool
+	err := h.db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM teams WHERE team_name=$1)",
+		team.TeamName,
+	).Scan(&exists)
 
-	if _, exists := h.store.Teams[team.TeamName]; exists {
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "database error", http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
 		writeError(w, api.TEAMEXISTS, "team_name already exists", http.StatusBadRequest)
 		return
 	}
 
-	h.store.Teams[team.TeamName] = &api.Team{
-		TeamName: team.TeamName,
-		Members:  team.Members,
+	_, err = h.db.Pool.Exec(ctx, "INSERT INTO teams(team_name) VALUES($1)", team.TeamName)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to create team", http.StatusInternalServerError)
+		return
 	}
 
 	for _, m := range team.Members {
-		if user, exists := h.store.Users[m.UserId]; exists {
-			user.UserId = m.UserId
-			user.Username = m.Username
-			user.IsActive = m.IsActive
-			user.TeamName = team.TeamName
-		} else {
-			h.store.Users[m.UserId] = &api.User{
-				UserId:   m.UserId,
-				Username: m.Username,
-				IsActive: m.IsActive,
-				TeamName: team.TeamName,
-			}
+		_, err := h.db.Pool.Exec(ctx, `
+			INSERT INTO users(user_id, username, team_name, is_active)
+			VALUES($1, $2, $3, $4)
+			ON CONFLICT (user_id) DO UPDATE
+			SET username = EXCLUDED.username,
+			    team_name = EXCLUDED.team_name,
+			    is_active = EXCLUDED.is_active
+		`, m.UserId, m.Username, team.TeamName, m.IsActive)
+		if err != nil {
+			writeError(w, api.INTERNALERROR, fmt.Sprintf("failed to insert user %s", m.UserId), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -102,12 +112,47 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.GetTeamGetParams) {
+	ctx := r.Context()
 	teamName := params.TeamName
-	team, exists := h.store.Teams[teamName]
+
+	var exists bool
+	err := h.db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM teams WHERE team_name=$1)",
+		teamName,
+	).Scan(&exists)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "database error", http.StatusInternalServerError)
+		return
+	}
 
 	if !exists {
-		writeError(w, "NOT_FOUND", "team not found", http.StatusNotFound)
+		writeError(w, api.NOTFOUND, "team not found", http.StatusNotFound)
 		return
+	}
+
+	rows, err := h.db.Pool.Query(ctx, `SELECT user_id, username, is_active FROM users WHERE team_name=$1`, teamName)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+
+	defer rows.Close()
+
+	var members []api.TeamMember
+	for rows.Next() {
+		var m api.TeamMember
+		if err := rows.Scan(&m.UserId, &m.Username, &m.IsActive); err != nil {
+			writeError(w, api.INTERNALERROR, "failed to fetch member", http.StatusInternalServerError)
+			return
+		}
+		members = append(members, m)
+	}
+
+	team := api.Team{
+		TeamName: teamName,
+		Members:  members,
 	}
 
 	writeJSON(w, http.StatusCreated, team)
@@ -118,6 +163,7 @@ func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, para
 }
 
 func (h *Handler) PostUsersSetIsActive(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var body api.PostUsersSetIsActiveJSONBody
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -132,25 +178,30 @@ func (h *Handler) PostUsersSetIsActive(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: check if is_active is in body and not just "false" by default
 
-	h.store.Mu.Lock()
-	defer h.store.Mu.Unlock()
+	cmdTag, err := h.db.Pool.Exec(ctx, `
+		UPDATE users 
+		SET is_active=$1
+		WHERE user_id=$2
+	`, body.IsActive, body.UserId)
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to update user", http.StatusInternalServerError)
+		return
+	}
 
-	user, exists := h.store.Users[body.UserId]
-	if !exists {
+	if cmdTag.RowsAffected() == 0 {
 		writeError(w, api.NOTFOUND, "user not found", http.StatusNotFound)
 		return
 	}
 
-	user.IsActive = body.IsActive
-
-	// это ужасный костыль и срочно нужно идти на постгрес
-	team := h.store.Teams[user.TeamName]
-	// because user was created when team was created, team must exist so we don't check for nil
-	for i := range team.Members {
-		if team.Members[i].UserId == body.UserId {
-			team.Members[i].IsActive = body.IsActive
-			break
-		}
+	var user api.User
+	err = h.db.Pool.QueryRow(ctx, `
+		SELECT user_id, username, team_name, is_active 
+		FROM users 
+		WHERE user_id=$1
+	`, body.UserId).Scan(&user.UserId, &user.Username, &user.TeamName, &user.IsActive)
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to fetch user", http.StatusInternalServerError)
+		return
 	}
 
 	writeJSON(w, http.StatusOK, user)

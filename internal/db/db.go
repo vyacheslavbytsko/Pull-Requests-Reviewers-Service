@@ -40,10 +40,10 @@ func NewDB() (*DB, error) {
 
 func createTables(ctx context.Context, pool *pgxpool.Pool) error {
 	queries := []string{
-		`CREATE TABLE teams (
+		`CREATE TABLE IF NOT EXISTS teams (
 			team_name TEXT PRIMARY KEY
 		);`,
-		`CREATE TABLE users (
+		`CREATE TABLE IF NOT EXISTS users (
 			user_id TEXT PRIMARY KEY,
 			username TEXT NOT NULL,
 			team_name TEXT NOT NULL REFERENCES teams(team_name),

@@ -4,4 +4,5 @@ package api
 
 const (
 	INVALIDREQUEST ErrorResponseErrorCode = "INVALID_REQUEST"
+	INTERNALERROR  ErrorResponseErrorCode = "INTERNAL_ERROR"
 )

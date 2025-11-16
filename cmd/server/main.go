@@ -12,16 +12,16 @@ import (
 )
 
 func main() {
-	database, dberr := db.NewDB()
+	db, dberr := db.NewDB()
 	if dberr != nil {
 		panic(dberr)
 	}
-	defer database.Close()
+	defer db.Close()
 
 	router := chi.NewRouter()
 	router.Use(middleware.Logger)
 
-	h := handler.NewHandler()
+	h := handler.NewHandler(db)
 	apiHandler := api.Handler(h)
 
 	router.Mount("/", apiHandler)
