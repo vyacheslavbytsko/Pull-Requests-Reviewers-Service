@@ -19,15 +19,17 @@ func NewHandler() *Handler {
 	}
 }
 
-func writeError(w http.ResponseWriter, code, message string, status int) {
+func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]map[string]string{
-		"error": {
-			"code":    code,
-			"message": message,
-		},
-	})
+	json.NewEncoder(w).Encode(data)
+}
+
+func writeError(w http.ResponseWriter, code api.ErrorResponseErrorCode, msg string, status int) {
+	resp := api.ErrorResponse{}
+	resp.Error.Code = code
+	resp.Error.Message = msg
+	writeJSON(w, status, resp)
 }
 
 func (h *Handler) PostPullRequestCreate(w http.ResponseWriter, r *http.Request) {
@@ -46,23 +48,23 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 	var team api.Team
 
 	if err := json.NewDecoder(r.Body).Decode(&team); err != nil {
-		writeError(w, "INVALID_REQUEST", "invalid request body", http.StatusBadRequest)
+		writeError(w, api.INVALIDREQUEST, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if team.TeamName == "" {
-		writeError(w, "INVALID_REQUEST", "team_name is required", http.StatusBadRequest)
+		writeError(w, api.INVALIDREQUEST, "team_name is required", http.StatusBadRequest)
 		return
 	}
 
 	if len(team.Members) == 0 {
-		writeError(w, "INVALID_REQUEST", "members cannot be empty", http.StatusBadRequest)
+		writeError(w, api.INVALIDREQUEST, "members cannot be empty", http.StatusBadRequest)
 		return
 	}
 
 	for i, m := range team.Members {
 		if m.UserId == "" || m.Username == "" {
-			writeError(w, "INVALID_REQUEST", fmt.Sprintf("member at index %d is invalid", i), http.StatusBadRequest)
+			writeError(w, api.INVALIDREQUEST, fmt.Sprintf("member at index %d is invalid", i), http.StatusBadRequest)
 			return
 		}
 	}
@@ -71,7 +73,7 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 	defer h.store.Mu.Unlock()
 
 	if _, exists := h.store.Teams[team.TeamName]; exists {
-		writeError(w, "TEAM_EXISTS", "team_name already exists", http.StatusBadRequest)
+		writeError(w, api.TEAMEXISTS, "team_name already exists", http.StatusBadRequest)
 		return
 	}
 
@@ -96,9 +98,7 @@ func (h *Handler) PostTeamAdd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]*api.Team{"team": h.store.Teams[team.TeamName]})
+	writeJSON(w, http.StatusCreated, team)
 }
 
 func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.GetTeamGetParams) {
@@ -110,9 +110,7 @@ func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]*api.Team{"team": team})
+	writeJSON(w, http.StatusCreated, team)
 }
 
 func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, params api.GetUsersGetReviewParams) {
