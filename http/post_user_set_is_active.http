@@ -1,0 +1,9 @@
+### POST request to add a new team with members
+POST http://localhost:8080/users/setIsActive
+Content-Type: application/json
+
+{
+    "user_id": "3",
+    "is_active": true
+}
+###

@@ -118,5 +118,40 @@ func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, para
 }
 
 func (h *Handler) PostUsersSetIsActive(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+	var body api.PostUsersSetIsActiveJSONBody
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, api.INVALIDREQUEST, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.UserId == "" {
+		writeError(w, api.INVALIDREQUEST, "user_id is required", http.StatusBadRequest)
+		return
+	}
+
+	// TODO: check if is_active is in body and not just "false" by default
+
+	h.store.Mu.Lock()
+	defer h.store.Mu.Unlock()
+
+	user, exists := h.store.Users[body.UserId]
+	if !exists {
+		writeError(w, api.NOTFOUND, "user not found", http.StatusNotFound)
+		return
+	}
+
+	user.IsActive = body.IsActive
+
+	// это ужасный костыль и срочно нужно идти на постгрес
+	team := h.store.Teams[user.TeamName]
+	// because user was created when team was created, team must exist so we don't check for nil
+	for i := range team.Members {
+		if team.Members[i].UserId == body.UserId {
+			team.Members[i].IsActive = body.IsActive
+			break
+		}
+	}
+
+	writeJSON(w, http.StatusOK, user)
 }
