@@ -1,0 +1,5 @@
+### GET request to get PRs reviewed by a user
+GET http://localhost:8080/users/getReview?user_id=2
+Accept: application/json
+###
+

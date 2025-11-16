@@ -29,7 +29,9 @@ func NewHandler(db *db.DB) *Handler {
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		fmt.Printf("failed to encode json: %v\n", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, code api.ErrorResponseErrorCode, msg string, status int) {
@@ -454,7 +456,56 @@ func (h *Handler) GetTeamGet(w http.ResponseWriter, r *http.Request, params api.
 }
 
 func (h *Handler) GetUsersGetReview(w http.ResponseWriter, r *http.Request, params api.GetUsersGetReviewParams) {
-	w.WriteHeader(http.StatusNotImplemented)
+	ctx := r.Context()
+	userId := params.UserId
+
+	if userId == "" {
+		writeError(w, api.INVALIDREQUEST, "user_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var exists bool
+	err := h.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE user_id=$1)", userId).Scan(&exists)
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to check if user exists", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
+		writeError(w, api.NOTFOUND, "user not found", http.StatusNotFound)
+		return
+	}
+
+	rows, err := h.db.Pool.Query(ctx, `SELECT pull_request_id, pull_request_name, author_id, status FROM prs WHERE $1 = ANY(assigned_reviewers)`, userId)
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to fetch pull requests", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var prs []api.PullRequestShort
+	for rows.Next() {
+		var pr api.PullRequestShort
+		var status string
+		if err := rows.Scan(&pr.PullRequestId, &pr.PullRequestName, &pr.AuthorId, &status); err != nil {
+			writeError(w, api.INTERNALERROR, "failed to scan pull request", http.StatusInternalServerError)
+			return
+		}
+		pr.Status = api.PullRequestShortStatus(status)
+		prs = append(prs, pr)
+	}
+
+	if err := rows.Err(); err != nil {
+		writeError(w, api.INTERNALERROR, "failed to fetch pull requests", http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"user_id":       userId,
+		"pull_requests": prs,
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) PostUsersSetIsActive(w http.ResponseWriter, r *http.Request) {
