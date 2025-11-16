@@ -1,0 +1,8 @@
+### Post request to merge pull request
+POST http://localhost:8080/pullRequest/merge
+Content-Type: application/json
+
+{
+  "pull_request_id": "1"
+}
+

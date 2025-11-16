@@ -158,7 +158,67 @@ func (h *Handler) PostPullRequestCreate(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) PostPullRequestMerge(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNotImplemented)
+	ctx := r.Context()
+	var body api.PostPullRequestMergeJSONBody
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, api.INVALIDREQUEST, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.PullRequestId == "" {
+		writeError(w, api.INVALIDREQUEST, "pull_request_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var (
+		status            string
+		mergedAt          *time.Time
+		authorId, prName  string
+		assignedReviewers []string
+		createdAt         *time.Time
+	)
+
+	err := h.db.Pool.QueryRow(ctx, `SELECT status, merged_at, author_id, pull_request_name, assigned_reviewers, created_at FROM prs WHERE pull_request_id=$1`, body.PullRequestId).Scan(&status, &mergedAt, &authorId, &prName, &assignedReviewers, &createdAt)
+
+	if err != nil {
+		writeError(w, api.NOTFOUND, "PR not found", http.StatusNotFound)
+		return
+	}
+
+	if status == string(api.PullRequestStatusMERGED) {
+		pr := api.PullRequest{
+			PullRequestId:     body.PullRequestId,
+			PullRequestName:   prName,
+			AuthorId:          authorId,
+			Status:            api.PullRequestStatusMERGED,
+			AssignedReviewers: assignedReviewers,
+			CreatedAt:         createdAt,
+			MergedAt:          mergedAt,
+		}
+		writeJSON(w, http.StatusOK, map[string]api.PullRequest{"pr": pr})
+		return
+	}
+
+	now := time.Now().UTC()
+	_, err = h.db.Pool.Exec(ctx, `UPDATE prs SET status=$1, merged_at=$2 WHERE pull_request_id=$3`, api.PullRequestStatusMERGED, now, body.PullRequestId)
+
+	if err != nil {
+		writeError(w, api.INTERNALERROR, "failed to merge PR", http.StatusInternalServerError)
+		return
+	}
+
+	pr := api.PullRequest{
+		PullRequestId:     body.PullRequestId,
+		PullRequestName:   prName,
+		AuthorId:          authorId,
+		Status:            api.PullRequestStatusMERGED,
+		AssignedReviewers: assignedReviewers,
+		CreatedAt:         createdAt,
+		MergedAt:          &now,
+	}
+
+	writeJSON(w, http.StatusOK, map[string]api.PullRequest{"pr": pr})
 }
 
 func (h *Handler) PostPullRequestReassign(w http.ResponseWriter, r *http.Request) {
