@@ -14,29 +14,9 @@ type Store struct {
 }
 
 func NewStore() *Store {
-	users := map[string]*api.User{
-		"1": {UserId: "1", Username: "Alice", IsActive: true, TeamName: "Backend"},
-		"2": {UserId: "2", Username: "Bob", IsActive: true, TeamName: "Backend"},
-		"3": {UserId: "3", Username: "Charlie", IsActive: false, TeamName: "Frontend"},
-	}
-	teams := map[string]*api.Team{
-		"Backend": {
-			TeamName: "Backend",
-			Members: []api.TeamMember{
-				UserToTeamMember(users["1"]),
-				UserToTeamMember(users["2"]),
-			},
-		},
-		"Frontend": {
-			TeamName: "Frontend",
-			Members: []api.TeamMember{
-				UserToTeamMember(users["3"]),
-			},
-		},
-	}
 	return &Store{
-		Users: users,
-		Teams: teams,
+		Users: make(map[string]*api.User),
+		Teams: make(map[string]*api.Team),
 		PRs:   make(map[string]*api.PullRequest),
 	}
 }
